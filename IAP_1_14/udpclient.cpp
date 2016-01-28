@@ -1,3 +1,9 @@
+/*               IAP Assignment 1                 
+			BHUSHAN KULKARNI  12CS30016 
+			Gaurav Kumar      12CS10020
+			Ankit Kumar Gupta 12CS10006
+                                                 */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <cstring>
@@ -54,7 +60,7 @@ int main(int argc, char *argv[])
     	while(1){
     		// printf("Waiting for Timeout\n");
     		time(&end);
-    	if(difftime(end,start)>=10) { start=end; break;	}
+    	if(difftime(end,start)>=1) { start=end; break;	}
     	}
     	memset(buffer,'\0',BUFFER_SIZE);
 			sprintf(buffer,"ECHO REQUEST");

@@ -1,4 +1,8 @@
 #!/bin/sh
+#               IAP Assignment 1                 
+#			BHUSHAN KULKARNI  12CS30016 
+#			Gaurav Kumar      12CS10020
+#			Ankit Kumar Gupta 12CS10006
 # delete
 ip netns del h1
 ip netns del h2

@@ -1,3 +1,9 @@
+/*               IAP Assignment 1                 
+			BHUSHAN KULKARNI  12CS30016 
+			Gaurav Kumar      12CS10020
+			Ankit Kumar Gupta 12CS10006
+                                                 */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>

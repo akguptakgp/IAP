@@ -1,3 +1,9 @@
+#!/bin/sh
+#               IAP Assignment 1                 
+#			BHUSHAN KULKARNI  12CS30016 
+#			Gaurav Kumar      12CS10020
+#			Ankit Kumar Gupta 12CS10006
+                                                 
 if [ $# -lt 2 ]; then
     echo "usage: $0 stp_enable true/false"
     exit -1;
