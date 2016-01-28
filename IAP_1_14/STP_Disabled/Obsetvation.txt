@@ -1,8 +1,1 @@
-1)With STP disable, since there is a loop in topology so during pacaket forwarding the number of packets flowing through network increases. and a lot of traffic gets created in the network .Due to this overhead traffic our system got hanged.
-so we couldn't capture the results from wireshark.
-
-
-
-
-
-
+If the switches are connected in a loop without STP, each switch would infinitely duplicate the first broadcast packet heard because there's nothing at Layer 2 to prevent a loop. In our case too, there is a loop in topology. When we started execution without STP, machine stopped responding because of large number of packets. So, we were not able to capture this on wireshark even after trying multiple times.
