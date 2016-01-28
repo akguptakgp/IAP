@@ -1,0 +1,8 @@
+1)With STP disable, since there is a loop in topology so during pacaket forwarding the number of packets flowing through network increases. and a lot of traffic gets created in the network .Due to this overhead traffic our system got hanged.
+so we couldn't capture the results from wireshark.
+
+
+
+
+
+
