@@ -1,0 +1,19 @@
+Topology is built as follows:
+
+h1-eth0-------s1-eth0
+h2-eth0-------s2-eth0
+s1-eth1-------s2-eth1
+s1-eth2-------s3-eth1
+s2-eth2-------s3-eth2
+
+Wireshark traces are saved in the directory STP_enabled.
+
+(A) Without STP:
+
+If the switches are connected in a loop without STP, each switch would infinitely duplicate the first broadcast packet heard because there's nothing at Layer 2 to prevent a loop. In our case too, there is a loop in topology. When we started execution without STP, machine stopped responding because of large number of packets. So, we were not able to capture this on wireshark even after trying multiple times.
+
+(B) With STP:  
+
+STP prevents loops by blocking one or more of the links. If one of the links in use goes down, then it would fail over to a previously blocked link. The idea behind a spanning tree topology is that bridges can discover a subset of the topology that is loop-free: that's the tree. In our case, it breaks loop by blocking the link from s1 to s2. As shown in wireshark STP packets description, it is determining cost of this link as 2, while cost of links s1---s3 and s2---s3 as 0. So, spanning tree construction blocks link s1---s2 since it has higher cost. So, UDP packets transit between h1 and h2 follows path s1---s3---s2 as can be seen from pcapng reports in directory STP_enabled. 
+
+Some packets with STP protocol are sent to determine spanning tree. ARP request and ARP reply packets are sent periodically to have updated MAC address of destination IP. Packets transmitted with UDP protocol are those ECHO and ECHO REPLY packets which are transmitted between client and server (h1 and h2).
