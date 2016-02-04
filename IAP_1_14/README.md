@@ -2,7 +2,7 @@
 ## to create the topology
 ## first delete any existing bridges and namespaces using the following commands 
 sudo bash
-./delscript.sh  
+./delscript.sh  x
 ## ignore any error if get in the above command
 ## then run
 ./script.sh stp_enable true # for running with stp enabled
