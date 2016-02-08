@@ -202,6 +202,8 @@ class LearningRouter (object):
     self.arp_table[IPAddr('10.0.3.1')]=EthAddr('00:00:00:00:00:03')
     self.arp_table[IPAddr('10.0.4.1')]=EthAddr('00:00:00:00:00:04')
 
+    self.que=[]
+
 
     # We want to hear PacketIn messages, so we listen
     # to the connection
@@ -240,7 +242,21 @@ class LearningRouter (object):
       print "arp reply DONE"
 
     if packet.payload.opcode == arp.REPLY:
-      self.arp_table[packet.next.protosrc]=packet.next.hwsrc
+      self.arp_table[packet.next.protosrc]=packet.src
+      que1=[]
+      for eth in que:
+        if eth.payload.dstip==packet.next.protosrc:
+          eth.dst=packet.src
+          msg = of.ofp_packet_out()
+          msg.data = eth.pack()
+          # print "inport",of.OFPP_IN_PORT
+          # print "outport",int(Interface)
+          msg.actions.append(of.ofp_action_output(port = int(Interface)))
+          msg.in_port = event.port
+          self.connection.send(msg)
+        else:
+          que1.append(eth)
+      que=que1
 
   def handle_icmp(self,event):
     print "ICMP Packet Arrived"
@@ -285,6 +301,7 @@ class LearningRouter (object):
     # ttl>0 
     # len > min_len
     return True
+
   def handle_ipPacket(self,event): # handle broad cast ip also 
     print "IP packet Received at R"+str(event.dpid)
     packet=event.parsed
@@ -322,13 +339,15 @@ class LearningRouter (object):
         icmp_rep.type = 3
 
         # Show the client that it's actually the me
-        arp_rep=ipv4_packet
-        arp_rep.next=icmp_rep
-        arp_rep.protocol=ICMP_PROTOCOL
+        rep=ipv4()
+        rep.srcip=self.IPAddr
+        rep.dstip=src_ip
+        rep.next=icmp_rep
+        rep.protocol=packet.payload.ICMP_PROTOCOL
         eth = ethernet()
         eth.dst = packet.src
         eth.src = self.EthAddr
-        eth.set_payload(arp_rep)
+        eth.set_payload(rep)
         eth.type = ethernet.IP_TYPE
         msg = of.ofp_packet_out()
         msg.data = eth.pack()
@@ -359,6 +378,17 @@ class LearningRouter (object):
         eth.type = ethernet.IP_TYPE
         if IPAddr(NextHopIP) in self.arp_table: 
           eth.dst = self.arp_table[IPAddr(NextHopIP)]
+          eth.src = self.EthAddr
+          eth.set_payload(ipv4_packet_out)
+
+          # msg is the "packet out" message. Now giving this packet special properties
+          msg = of.ofp_packet_out()
+          msg.data = eth.pack()
+          # print "inport",of.OFPP_IN_PORT
+          # print "outport",int(Interface)
+          msg.actions.append(of.ofp_action_output(port = int(Interface)))
+          msg.in_port = event.port
+          self.connection.send(msg)
         else:
           arp_rep = arp()
           arp_rep.opcode = arp.REQUEST
@@ -383,22 +413,11 @@ class LearningRouter (object):
           msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
           msg.in_port = in_port
           self.connection.send(msg)
-          while IPAddr(NextHopIP) not in self.arp_table:
-            pass
-          eth.dst = self.arp_table[IPAddr(NextHopIP)]
-
+          eth.src = self.EthAddr
+          eth.set_payload(ipv4_packet_out)
+          que.append(eth)
            #  eth.dst = EthAddr('ff:ff:ff:ff:ff:ff')
-        eth.src = self.EthAddr
-        eth.set_payload(ipv4_packet_out)
-
-        # msg is the "packet out" message. Now giving this packet special properties
-        msg = of.ofp_packet_out()
-        msg.data = eth.pack()
-        # print "inport",of.OFPP_IN_PORT
-        # print "outport",int(Interface)
-        msg.actions.append(of.ofp_action_output(port = int(Interface)))
-        msg.in_port = event.port
-        self.connection.send(msg)
+        
 
   def _handle_PacketIn (self, event):
     """
@@ -432,6 +451,7 @@ class LearningRouter (object):
       self.connection.send(msg)
       # print "packet droped"
       return
+
 class l2_learning (object):
   """
   Waits for OpenFlow switches to connect and makes them learning switches.
