@@ -26,6 +26,7 @@ from pox.lib.util import str_to_bool
 import time
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.arp import arp
+from pox.lib.packet.icmp import icmp,unreach,echo
 from pox.lib.packet.ipv4 import ipv4
 from pox.lib.addresses import *
 
@@ -209,39 +210,43 @@ class LearningRouter (object):
   def handle_arp (self, packet, in_port):
     print "ARP Packet Arrived at Router R"+str(self.connection.dpid)+" at Interface"+str(in_port)
     
-    if packet.payload.opcode != arp.REQUEST:
-      return
-    # Get the ARP request from packet
-    arp_req = packet.next
+    if packet.payload.opcode == arp.REQUEST:
+      arp_req = packet.next
 
-    # Create ARP reply
-    arp_rep = arp()
-    arp_rep.opcode = arp.REPLY
+      # Create ARP reply
+      arp_rep = arp()
+      arp_rep.opcode = arp.REPLY
 
-    # Show the client that it's actually the me
-    arp_rep.hwsrc = self.EthAddr
-    arp_rep.hwdst = arp_req.hwsrc
-    arp_rep.protosrc = self.IPAddr
-    arp_rep.protodst = arp_req.protosrc
+      # Show the client that it's actually the me
+      arp_rep.hwsrc = self.EthAddr
+      arp_rep.hwdst = arp_req.hwsrc
+      arp_rep.protosrc = self.IPAddr
+      arp_rep.protodst = arp_req.protosrc
 
-    # Create the Ethernet packet
-    eth = ethernet()
-    eth.type = ethernet.ARP_TYPE
-    eth.dst = packet.src
-    eth.src = self.EthAddr
-    eth.set_payload(arp_rep)
+      # Create the Ethernet packet
+      eth = ethernet()
+      eth.type = ethernet.ARP_TYPE
+      eth.dst = packet.src
+      eth.src = self.EthAddr
+      eth.set_payload(arp_rep)
 
-    # Send the ARP reply to client
-    # msg is the "packet out" message. Now giving this packet special properties
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
-    msg.in_port = in_port
-    self.connection.send(msg)
-    print "arp reply DONE"
+      # Send the ARP reply to client
+      # msg is the "packet out" message. Now giving this packet special properties
+      msg = of.ofp_packet_out()
+      msg.data = eth.pack()
+      msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+      msg.in_port = in_port
+      self.connection.send(msg)
+      print "arp reply DONE"
+
+    if packet.payload.opcode == arp.REPLY:
+      self.arp_table[packet.next.protosrc]=packet.next.hwsrc
+
   def handle_icmp(self,event):
-
     print "ICMP Packet Arrived"
+    packet=event.parsed
+    if packet.payload.next.type==3:
+      print "Destination Host Unreachable"
     return
   
   def ComputeNetWorkAddr(self,Ip,netMask):
@@ -312,6 +317,26 @@ class LearningRouter (object):
       nxt=self.FindNextHopInterface(dst_ip.toStr())
       if(nxt[0]==-1):   # need to send an icmp packet 
         print "No Route to Host"
+        # Create ARP reply
+        icmp_rep = icmp()
+        icmp_rep.type = 3
+
+        # Show the client that it's actually the me
+        arp_rep=ipv4_packet
+        arp_rep.next=icmp_rep
+        arp_rep.protocol=ICMP_PROTOCOL
+        eth = ethernet()
+        eth.dst = packet.src
+        eth.src = self.EthAddr
+        eth.set_payload(arp_rep)
+        eth.type = ethernet.IP_TYPE
+        msg = of.ofp_packet_out()
+        msg.data = eth.pack()
+        msg.actions.append(of.ofp_action_output(port = int(Interface)))
+        msg.in_port = event.port
+        self.connection.send(msg)
+        print "icmp reply DONE"
+
       else:
         NextHopIP=nxt[0]
         Interface=nxt[1][-1]
@@ -329,12 +354,40 @@ class LearningRouter (object):
         # print "origin",ipv4_packet_out
 
         # Create the Ethernet packet
+
         eth = ethernet()
         eth.type = ethernet.IP_TYPE
         if IPAddr(NextHopIP) in self.arp_table: 
           eth.dst = self.arp_table[IPAddr(NextHopIP)]
         else:
-             eth.dst = EthAddr('ff:ff:ff:ff:ff:ff')
+          arp_rep = arp()
+          arp_rep.opcode = arp.REQUEST
+
+          # Show the client that it's actually the me
+          arp_rep.hwsrc = self.EthAddr
+          #arp_rep.hwdst = 'ff:ff:ff:ff:ff:ff'
+          arp_rep.protosrc = self.IPAddr
+          arp_rep.protodst = IPAddr(NextHopIP)
+
+          # Create the Ethernet packet
+          eth1 = ethernet()
+          eth1.type = ethernet.ARP_TYPE
+          eth1.dst = 'ff:ff:ff:ff:ff:ff'
+          eth1.src = self.EthAddr
+          eth1.set_payload(arp_rep)
+
+          # Send the ARP reply to client
+          # msg is the "packet out" message. Now giving this packet special properties
+          msg = of.ofp_packet_out()
+          msg.data = eth1.pack()
+          msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+          msg.in_port = in_port
+          self.connection.send(msg)
+          while IPAddr(NextHopIP) not in self.arp_table:
+            pass
+          eth.dst = self.arp_table[IPAddr(NextHopIP)]
+
+           #  eth.dst = EthAddr('ff:ff:ff:ff:ff:ff')
         eth.src = self.EthAddr
         eth.set_payload(ipv4_packet_out)
 
