@@ -197,10 +197,10 @@ class LearningRouter (object):
       # self.arp_table[IPAddr('10.0.4.2')]=EthAddr('00:00:00:00:00:01')
       # self.arp_table[IPAddr('10.0.4.3')]=EthAddr('00:00:00:00:00:01')
     
-    self.arp_table[IPAddr('10.0.1.1')]=EthAddr('00:00:00:00:00:01')
-    self.arp_table[IPAddr('10.0.2.1')]=EthAddr('00:00:00:00:00:02')
-    self.arp_table[IPAddr('10.0.3.1')]=EthAddr('00:00:00:00:00:03')
-    self.arp_table[IPAddr('10.0.4.1')]=EthAddr('00:00:00:00:00:04')
+    # self.arp_table[IPAddr('10.0.1.1')]=EthAddr('00:00:00:00:00:01')
+    # self.arp_table[IPAddr('10.0.2.1')]=EthAddr('00:00:00:00:00:02')
+    # self.arp_table[IPAddr('10.0.3.1')]=EthAddr('00:00:00:00:00:03')
+    # self.arp_table[IPAddr('10.0.4.1')]=EthAddr('00:00:00:00:00:04')
 
     self.que=[]
 
@@ -244,7 +244,10 @@ class LearningRouter (object):
     if packet.payload.opcode == arp.REPLY:
       self.arp_table[packet.next.protosrc]=packet.src
       que1=[]
-      for eth in que:
+      for tpl in self.que:
+      	eth=tpl[0]
+      	Interface=tpl[1]
+      	prt=tpl[2]
         if eth.payload.dstip==packet.next.protosrc:
           eth.dst=packet.src
           msg = of.ofp_packet_out()
@@ -252,15 +255,47 @@ class LearningRouter (object):
           # print "inport",of.OFPP_IN_PORT
           # print "outport",int(Interface)
           msg.actions.append(of.ofp_action_output(port = int(Interface)))
-          msg.in_port = event.port
+          msg.in_port = prt
           self.connection.send(msg)
         else:
-          que1.append(eth)
-      que=que1
+          que1.append(tpl)
+      self.que=que1
 
   def handle_icmp(self,event):
     print "ICMP Packet Arrived"
     packet=event.parsed
+    src_mac = packet.src
+    dst_mac = packet.dst
+    ipv4_packet = event.parsed.find("ipv4")
+    src_ip = ipv4_packet.srcip
+    dst_ip = ipv4_packet.dstip
+    if packet.payload.next.type==8:
+		print "handing"
+		icmp_rep = icmp()
+		# icmp_rep.type = 3
+		icmp_rep.next=echo()
+		icmp_rep.next.seq=packet.payload.next.next.seq
+		icmp_rep.next.id=packet.payload.next.next.id
+		icmp_rep.next.raw=packet.payload.next.next.raw
+
+		# Show the client that it's actually the me
+		rep=ipv4()
+		rep.srcip=self.IPAddr
+		rep.dstip=src_ip
+		rep.next=icmp_rep
+		rep.protocol=packet.payload.ICMP_PROTOCOL
+		eth = ethernet()
+		eth.dst = packet.src
+		eth.src = self.EthAddr
+		eth.set_payload(rep)
+		eth.type = ethernet.IP_TYPE
+		msg = of.ofp_packet_out()
+		msg.data = eth.pack()
+		msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+		msg.in_port = event.port
+		self.connection.send(msg)
+		print "done handing"
+		return
     if packet.payload.next.type==3:
       print "Destination Host Unreachable"
     return
@@ -297,8 +332,17 @@ class LearningRouter (object):
         return (longestMatchIndx,longestMatchIndx)
       return nextHop,Interface
         # print "netmask_to_cidr",nextHop,Interface
-  def isValidIpPacket(self,packet):
-    # ttl>0 
+  def isValidIpPacket(self,event):
+    ipv4_packet = event.parsed.find("ipv4")
+    if(ipv4_packet.csum!=ipv4_packet.checksum()):
+  	  print "Ip packet checksum not macthing"
+  	  return False
+    if(ipv4_packet.ttl<=0):
+  	  print "TTL Invalid"
+  	  return False		
+    if(ipv4_packet.iplen<20):
+  	  print "Length Invalid"
+  	  return False	
     # len > min_len
     return True
 
@@ -313,11 +357,8 @@ class LearningRouter (object):
     if dst_mac!=self.EthAddr and dst_mac!=EthAddr('ff:ff:ff:ff:ff:ff'):
       return
     
-    if(not self.isValidIpPacket(packet)):
+    if(not self.isValidIpPacket(event)):
       return
-
-    if(packet.payload.protocol==packet.payload.ICMP_PROTOCOL):
-      self.handle_icmp(event)
 
     ipv4_packet = event.parsed.find("ipv4")
     # Do more processing of the IPv4 packet
@@ -330,13 +371,21 @@ class LearningRouter (object):
     if(dst_ip==self.IPAddr or dst_ip.toStr()=='255.255.255.255'):
       print "My Packet accept at ",self.IPAddr
       print ipv4_packet
+      if(packet.payload.protocol==packet.payload.ICMP_PROTOCOL):
+      	self.handle_icmp(event)
     else:   
       nxt=self.FindNextHopInterface(dst_ip.toStr())
       if(nxt[0]==-1):   # need to send an icmp packet 
-        print "No Route to Host"
+        # print "No Route to Host"
         # Create ARP reply
         icmp_rep = icmp()
         icmp_rep.type = 3
+        icmp_rep.code=0
+        icmp_rep.next=unreach()
+
+        # icmp_rep.next.seq=packet.payload.next.next.seq
+        # icmp_rep.next.id=packet.payload.next.next.id
+        # icmp_rep.next.raw=packet.payload.next.next.raw
 
         # Show the client that it's actually the me
         rep=ipv4()
@@ -351,7 +400,7 @@ class LearningRouter (object):
         eth.type = ethernet.IP_TYPE
         msg = of.ofp_packet_out()
         msg.data = eth.pack()
-        msg.actions.append(of.ofp_action_output(port = int(Interface)))
+        msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
         msg.in_port = event.port
         self.connection.send(msg)
         print "icmp reply DONE"
@@ -395,6 +444,7 @@ class LearningRouter (object):
 
           # Show the client that it's actually the me
           arp_rep.hwsrc = self.EthAddr
+          arp_rep.hwdst = EthAddr('ff:ff:ff:ff:ff:ff')
           #arp_rep.hwdst = 'ff:ff:ff:ff:ff:ff'
           arp_rep.protosrc = self.IPAddr
           arp_rep.protodst = IPAddr(NextHopIP)
@@ -402,7 +452,7 @@ class LearningRouter (object):
           # Create the Ethernet packet
           eth1 = ethernet()
           eth1.type = ethernet.ARP_TYPE
-          eth1.dst = 'ff:ff:ff:ff:ff:ff'
+          eth1.dst = EthAddr('ff:ff:ff:ff:ff:ff')
           eth1.src = self.EthAddr
           eth1.set_payload(arp_rep)
 
@@ -410,12 +460,12 @@ class LearningRouter (object):
           # msg is the "packet out" message. Now giving this packet special properties
           msg = of.ofp_packet_out()
           msg.data = eth1.pack()
-          msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
-          msg.in_port = in_port
+          msg.actions.append(of.ofp_action_output(port = int(Interface)))
+          msg.in_port = event.port
           self.connection.send(msg)
           eth.src = self.EthAddr
           eth.set_payload(ipv4_packet_out)
-          que.append(eth)
+          self.que.append((eth,int(Interface),event.port))
            #  eth.dst = EthAddr('ff:ff:ff:ff:ff:ff')
         
 
