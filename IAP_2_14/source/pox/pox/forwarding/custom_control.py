@@ -328,7 +328,7 @@ class LearningRouter (object):
             # print "longestMatchIndx",longestMatch,indx
       # print longestMatchIndx,longestMatch
       if(longestMatchIndx==-1):
-        if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr,self.subnet_mask):
+        if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr.toStr(),self.subnet_mask):
           return (longestMatchIndx,longestMatchIndx,1)
         return (longestMatchIndx,longestMatchIndx,0)
       return nextHop,Interface,0
@@ -343,7 +343,7 @@ class LearningRouter (object):
       icmp_rep = icmp()
       icmp_rep.type = 11 # TYPE_TIME_EXCEED
       #icmp_rep.code=0
-      #icmp_rep.next=unreach()
+      icmp_rep.next=unreach()
 
       # icmp_rep.next.seq=packet.payload.next.next.seq
       # icmp_rep.next.id=packet.payload.next.next.id
