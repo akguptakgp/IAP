@@ -177,6 +177,7 @@ class LearningRouter (object):
     # Switch we'll be adding L2 learning switch capabilities to
     self.connection = connection
     self.arp_table={}
+    self.subnet_mask='255.255.255.0'
     # Assign IP and Eth Address
     if(self.connection.dpid==1): # Router R1
       self.IPAddr=IPAddr('10.0.1.1')
@@ -194,13 +195,6 @@ class LearningRouter (object):
     else:
       self.IPAddr=IPAddr('10.0.4.1')        # Router R4
       self.EthAddr=EthAddr('00:00:00:00:00:04')
-      # self.arp_table[IPAddr('10.0.4.2')]=EthAddr('00:00:00:00:00:01')
-      # self.arp_table[IPAddr('10.0.4.3')]=EthAddr('00:00:00:00:00:01')
-    
-    # self.arp_table[IPAddr('10.0.1.1')]=EthAddr('00:00:00:00:00:01')
-    # self.arp_table[IPAddr('10.0.2.1')]=EthAddr('00:00:00:00:00:02')
-    # self.arp_table[IPAddr('10.0.3.1')]=EthAddr('00:00:00:00:00:03')
-    # self.arp_table[IPAddr('10.0.4.1')]=EthAddr('00:00:00:00:00:04')
 
     self.que=[]
 
@@ -269,6 +263,7 @@ class LearningRouter (object):
     ipv4_packet = event.parsed.find("ipv4")
     src_ip = ipv4_packet.srcip
     dst_ip = ipv4_packet.dstip
+
     if packet.payload.next.type==8:
 		print "handing"
 		icmp_rep = icmp()
@@ -296,8 +291,12 @@ class LearningRouter (object):
 		self.connection.send(msg)
 		print "done handing"
 		return
+
     if packet.payload.next.type==3:
-      print "Destination Host Unreachable"
+      if packet.payload.next.type==1:
+        print "Destination Host Unreachable"
+      if packet.payload.next.type==0:
+        print "Destination Network Unreachable"
     return
   
   def ComputeNetWorkAddr(self,Ip,netMask):
@@ -329,17 +328,44 @@ class LearningRouter (object):
             # print "longestMatchIndx",longestMatch,indx
       # print longestMatchIndx,longestMatch
       if(longestMatchIndx==-1):
-        return (longestMatchIndx,longestMatchIndx)
-      return nextHop,Interface
-        # print "netmask_to_cidr",nextHop,Interface
+        if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr,self.subnet_mask):
+          return (longestMatchIndx,longestMatchIndx,1)
+        return (longestMatchIndx,longestMatchIndx,0)
+      return nextHop,Interface,0
+
   def isValidIpPacket(self,event):
     ipv4_packet = event.parsed.find("ipv4")
     if(ipv4_packet.csum!=ipv4_packet.checksum()):
   	  print "Ip packet checksum not macthing"
   	  return False
     if(ipv4_packet.ttl<=0):
-  	  print "TTL Invalid"
-  	  return False		
+      print "TTL Invalid"
+      icmp_rep = icmp()
+      icmp_rep.type = 11 # TYPE_TIME_EXCEED
+      #icmp_rep.code=0
+      #icmp_rep.next=unreach()
+
+      # icmp_rep.next.seq=packet.payload.next.next.seq
+      # icmp_rep.next.id=packet.payload.next.next.id
+      # icmp_rep.next.raw=packet.payload.next.next.raw
+
+      # Show the client that it's actually the me
+      rep=ipv4()
+      rep.srcip=self.IPAddr
+      rep.dstip=ipv4_packet.srcip
+      rep.next=icmp_rep
+      rep.protocol=ipv4_packet.payload.ICMP_PROTOCOL
+      eth = ethernet()
+      eth.dst = ipv4_packet.src
+      eth.src = self.EthAddr
+      eth.set_payload(rep)
+      eth.type = ethernet.IP_TYPE
+      msg = of.ofp_packet_out()
+      msg.data = eth.pack()
+      msg.actions.append(of.ofp_action_output(port = of.OFPP_IN_PORT))
+      msg.in_port = event.port
+      self.connection.send(msg)
+      return False		
     if(ipv4_packet.iplen<20):
   	  print "Length Invalid"
   	  return False	
@@ -349,11 +375,9 @@ class LearningRouter (object):
   def handle_ipPacket(self,event): # handle broad cast ip also 
     print "IP packet Received at R"+str(event.dpid)
     packet=event.parsed
-      # return
     src_mac = packet.src
     dst_mac = packet.dst
-    # print src_mac
-    # print dst_mac
+
     if dst_mac!=self.EthAddr and dst_mac!=EthAddr('ff:ff:ff:ff:ff:ff'):
       return
     
@@ -364,9 +388,6 @@ class LearningRouter (object):
     # Do more processing of the IPv4 packet
     src_ip = ipv4_packet.srcip
     dst_ip = ipv4_packet.dstip
-    # print src_ip.toStr()
-    # print dst_ip.toStr()
-    # print ipv4_packet
 
     if(dst_ip==self.IPAddr or dst_ip.toStr()=='255.255.255.255'):
       print "My Packet accept at ",self.IPAddr
@@ -380,7 +401,7 @@ class LearningRouter (object):
         # Create ARP reply
         icmp_rep = icmp()
         icmp_rep.type = 3
-        icmp_rep.code=0
+        icmp_rep.code= nxt[2]
         icmp_rep.next=unreach()
 
         # icmp_rep.next.seq=packet.payload.next.next.seq
@@ -408,19 +429,12 @@ class LearningRouter (object):
       else:
         NextHopIP=nxt[0]
         Interface=nxt[1][-1]
-        # print "send to ",NextHopIP," using Interface",int(Interface)
-        
-        ## Assuming we have ARP need to implement
-        # print "Next Hop MAc",self.arp_table[IPAddr(NextHopIP)]
 
         payload=packet.payload.payload # payload of IP packet
         # create a empty IP packet
 
         ipv4_packet_out=ipv4_packet
         ipv4_packet_out.ttl=ipv4_packet_out.ttl-1
-        # print "copied",ipv4_packet_out
-        # print "origin",ipv4_packet_out
-
         # Create the Ethernet packet
 
         eth = ethernet()
@@ -433,8 +447,6 @@ class LearningRouter (object):
           # msg is the "packet out" message. Now giving this packet special properties
           msg = of.ofp_packet_out()
           msg.data = eth.pack()
-          # print "inport",of.OFPP_IN_PORT
-          # print "outport",int(Interface)
           msg.actions.append(of.ofp_action_output(port = int(Interface)))
           msg.in_port = event.port
           self.connection.send(msg)

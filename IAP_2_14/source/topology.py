@@ -7,7 +7,7 @@ from mininet.topo import Topo
 from mininet.log import setLogLevel, info
 from mininet.node import CPULimitedHost, Host, Node
 from mininet.node import OVSKernelSwitch, UserSwitch
-from mininet.util import custom, customClass
+from mininet.util import custom
 
 class MyTopo( Topo ):
     "Simple topology example."
