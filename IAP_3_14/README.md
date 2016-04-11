@@ -1,0 +1,8 @@
+# to start the Controller run
+cd source/pox
+sudo ./pox.py log.level --WARNING pox.forwarding.custom_control
+
+
+# to create the topology
+sudo mn --custom ./source/topology.py --topo=mytopo --controller=remote,ip=127.0.0.1,port=6633
+

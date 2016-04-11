@@ -29,12 +29,27 @@ from pox.lib.packet.arp import arp
 from pox.lib.packet.icmp import icmp,unreach,echo
 from pox.lib.packet.ipv4 import ipv4
 from pox.lib.addresses import *
+from pox.lib.recoco import Timer
+import time
+import networkx as nx
 
 log = core.getLogger()
 
 # We don't want to flood immediately when a switch connects.
 # Can be overriden on commandline.
 _flood_delay = 0
+HELLOINT = 5
+NBRTIMEOUT = 15
+LSUINT = 30
+
+_running = False
+_hello_tos = 126
+_lsu_tos = 127
+neighbours = {}
+times = {}
+seqnum = {}
+G=nx.Graph()
+hosts=[]
 
 class LearningSwitch (object):
   def __init__ (self, connection, transparent):
@@ -143,24 +158,26 @@ class LearningRouter (object):
     self.connection = connection
     self.arp_table={}
     self.subnet_mask='255.255.255.0'
+    global hosts
     # Assign IP and Eth Address
     if(self.connection.dpid==1): # Router R1
       self.IPAddr=IPAddr('10.0.1.1')
       self.EthAddr=EthAddr('00:00:00:00:00:01')
-      # self.arp_table[IPAddr('10.0.1.2')]=EthAddr('00:00:00:00:00:01')
-      # self.arp_table[IPAddr('10.0.1.3')]=EthAddr('00:00:00:00:00:01')
+      hosts.append('10.0.1.2')
+      hosts.append('10.0.1.3')
     elif(self.connection.dpid==2): # Router R2
       self.IPAddr=IPAddr('10.0.2.1')
       self.EthAddr=EthAddr('00:00:00:00:00:02')
-      # self.arp_table[IPAddr('10.0.2.2')]=EthAddr('00:00:00:00:00:01')
+      hosts.append('10.0.2.2')
     elif(self.connection.dpid==3): # Router R3
       self.IPAddr=IPAddr('10.0.3.1')
       self.EthAddr=EthAddr('00:00:00:00:00:03')
-      # self.arp_table[IPAddr('10.0.3.2')]=EthAddr('00:00:00:00:00:01')
+      hosts.append('10.0.3.2')
     else:
       self.IPAddr=IPAddr('10.0.4.1')        # Router R4
       self.EthAddr=EthAddr('00:00:00:00:00:04')
-
+      hosts.append('10.0.4.2')
+      hosts.append('10.0.4.3')
     self.que=[]
 
 
@@ -274,30 +291,27 @@ class LearningRouter (object):
     return Netstr[:-1]  
 
   def FindNextHopInterface(self,ip):
-    f=open('../route_tabels/r'+str(self.connection.dpid)+'_tabel.txt')
-    if(f!=None):
-      route=f.read().split('\n')[1:]
-      longestMatch=-1
-      indx=-1
-      longestMatchIndx=-1
-      for f in route:
-        destIp=f.split()[0]
-        netMask=f.split()[1]
-        indx+=1
-        if(destIp==self.ComputeNetWorkAddr(ip,netMask)):
-          if(longestMatch < netmask_to_cidr(netMask)):
-            longestMatchIndx=indx
-            longestMatch=netmask_to_cidr(netMask)
-            nextHop=f.split()[2]
-            Interface=f.split()[3]
-            # print "longestMatchIndx",longestMatch,indx
-      # print longestMatchIndx,longestMatch
-      if(longestMatchIndx==-1):
-        if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr.toStr(),self.subnet_mask):
-          return (longestMatchIndx,longestMatchIndx,1)
-        return (longestMatchIndx,longestMatchIndx,0)
-      return nextHop,Interface,0
-
+  	global def_int,G
+  	if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr.toStr(),self.subnet_mask):
+  		if ip.toStr() in hosts:
+  			return ip.toStr(),def_int,0
+  		else :
+  			return -1,-1,1
+  	if ip not in G.nodes():
+  		ip1=ip.toStr().split('.')
+  		ip1[-1]='1'
+  		ip1='.'.join(ip1)
+  		if IPAddr(ip1) not in G.nodes():
+  			return -1,-1,0
+  		else:
+  			ip=IPAddr(ip1)
+  	if not nx.has_path(self.IPAddr,ip):
+  		return -1,-1,0
+  	l=nx.shortest_path(self.IPAddr,ip)
+  	for i in neighbours.keys():
+  		if neighbours[i]==l[1]:
+  			return l[1],i,0
+  			
   def isValidIpPacket(self,event):
     ipv4_packet = event.parsed.find("ipv4")
     if(ipv4_packet.csum!=ipv4_packet.checksum()):
@@ -339,20 +353,48 @@ class LearningRouter (object):
 
   def handle_ipPacket(self,event): # handle broad cast ip also 
     print "IP packet Received at R"+str(event.dpid)
+
     packet=event.parsed
     src_mac = packet.src
     dst_mac = packet.dst
+
+    ipv4_packet = event.parsed.find("ipv4")
+    # Do more processing of the IPv4 packet
+    src_ip = ipv4_packet.srcip
+    dst_ip = ipv4_packet.dstip
+    global _hello_tos, _lsu_tos
+    if ipv4_packet.tos == _hello_tos:
+    	if OFPP_IN_PORT in times.keys() and neighbours[OFPP_IN_PORT]==src_ip:
+    		return
+    	neighbours[OFPP_IN_PORT]=src_ip
+    	times[OFPP_IN_PORT]=time.time()
+    	send_lsu()
+    	return
+
+    if ipv4_packet.tos == _lsu_tos:
+		pl=ipv4_packet.next
+		lst=pl.split(':')[:-1]
+		if src_ip in seqnum.keys() and seqnum[src_ip]<=int(pl[0]):
+			return
+		seqnum[src_ip]=int(pl[0])
+		G.remove_node(src_ip)
+		for i in lst[1:]:
+			G.add_edge(src_ip,IPAddr(i))
+		eth = ethernet()
+	    eth.src = self.EthAddr
+	    eth.set_payload(ipv4_packet)
+	    eth.type = ethernet.IP_TYPE
+	    msg = of.ofp_packet_out()
+	    msg.data = eth.pack()
+	    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+	    self.connection.send(msg)
+	    return
 
     if dst_mac!=self.EthAddr and dst_mac!=EthAddr('ff:ff:ff:ff:ff:ff'):
       return
     
     if(not self.isValidIpPacket(event)):
       return
-
-    ipv4_packet = event.parsed.find("ipv4")
-    # Do more processing of the IPv4 packet
-    src_ip = ipv4_packet.srcip
-    dst_ip = ipv4_packet.dstip
 
     if(dst_ip==self.IPAddr or dst_ip.toStr()=='255.255.255.255'):
       print "My Packet accept at ",self.IPAddr
@@ -499,6 +541,56 @@ class l2_learning (object):
       pass
       # print "ignoring switch",event.dpid  
 
+seq=1
+def send_lsu():
+	global seq
+	pl=str(seq)+':'
+	seq=seq+1
+	for i in neighbours.values():
+		pl=pl+i.toStr()+':'
+	rep=ipv4()
+	rep.next=pl
+	global _lsu_tos
+	rep.tos=_lsu_tos
+    rep.srcip=self.IPAddr
+    eth = ethernet()
+    eth.src = self.EthAddr
+    eth.set_payload(rep)
+    eth.type = ethernet.IP_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+    self.connection.send(msg)
+
+ct=1
+def _handle_timer(ofnexus):
+	rep=ipv4()
+	global _hello_tos,ct
+	if ct==6:
+		send_lsu()
+		ct=0
+	ct=ct+1
+	rep.tos=_hello_tos
+    rep.srcip=self.IPAddr
+    eth = ethernet()
+    eth.src = self.EthAddr
+    eth.set_payload(rep)
+    eth.type = ethernet.IP_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+    self.connection.send(msg)
+
+    # CHECK outdated neighbours
+    tm=time.time()
+    sz=times.keys()
+    global NBRTIMEOUT
+    for port in sz:
+    	if tm-times[port]>NBRTIMEOUT:
+    		times.pop(port,0)
+    		neighbours.pop(port,0)
+    if len(times.keys())<len(sz):
+    	send_lsu()
 
 def launch (transparent=False, hold_down=_flood_delay):
   """
@@ -512,3 +604,13 @@ def launch (transparent=False, hold_down=_flood_delay):
     raise RuntimeError("Expected hold-down to be a number")
 
   core.registerNew(l2_learning, str_to_bool(transparent))
+
+  global HELLOINT
+  def start ():
+    global _running
+    if _running:
+      log.error("Keepalive already running")
+      return
+    _running = True
+    Timer( HELLOINT, _handle_timer, recurring=True, args=(core.openflow,))
+  core.call_when_ready(start, "openflow", __name__)
