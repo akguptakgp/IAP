@@ -258,9 +258,9 @@ class LearningRouter (object):
 		return
 
     if packet.payload.next.type==3:
-      if packet.payload.next.type==1:
+      if packet.payload.next.code==1:
         print "Destination Host Unreachable"
-      if packet.payload.next.type==0:
+      if packet.payload.next.code==0:
         print "Destination Network Unreachable"
     return
   
@@ -299,11 +299,21 @@ class LearningRouter (object):
       return nextHop,Interface,0
 
   def isValidIpPacket(self,event):
+    # ipv4_packet = event.parsed.find("ipv4")
     ipv4_packet = event.parsed.find("ipv4")
+    # Do more processing of the IPv4 packet
+    src_ip = ipv4_packet.srcip
+    dst_ip = ipv4_packet.dstip
     if(ipv4_packet.csum!=ipv4_packet.checksum()):
   	  print "Ip packet checksum not macthing"
   	  return False
-    if(ipv4_packet.ttl<=0):
+    if(ipv4_packet.ttl<=1):
+      if(dst_ip==self.IPAddr or dst_ip.toStr()=='255.255.255.255'):
+        print "My Packet accept at ",self.IPAddr
+        print ipv4_packet
+        if(packet.payload.protocol==packet.payload.ICMP_PROTOCOL):
+          self.handle_icmp(event)
+        return False  
       print "TTL Invalid"
       icmp_rep = icmp()
       icmp_rep.type = 11 # TYPE_TIME_EXCEED
@@ -319,9 +329,9 @@ class LearningRouter (object):
       rep.srcip=self.IPAddr
       rep.dstip=ipv4_packet.srcip
       rep.next=icmp_rep
-      rep.protocol=ipv4_packet.payload.ICMP_PROTOCOL
+      rep.protocol=ipv4_packet.ICMP_PROTOCOL
       eth = ethernet()
-      eth.dst = ipv4_packet.src
+      eth.dst = event.parsed.src
       eth.src = self.EthAddr
       eth.set_payload(rep)
       eth.type = ethernet.IP_TYPE
@@ -395,11 +405,11 @@ class LearningRouter (object):
         NextHopIP=nxt[0]
         Interface=nxt[1][-1]
 
-        payload=packet.payload.payload # payload of IP packet
+        # payload=packet.payload.pa/yload # payload of IP packet
         # create a empty IP packet
 
-        ipv4_packet_out=ipv4_packet
-        ipv4_packet_out.ttl=ipv4_packet_out.ttl-1
+        # ipv4_packet_out=ipv4_packet
+        ipv4_packet.ttl=ipv4_packet.ttl-1
         # Create the Ethernet packet
 
         eth = ethernet()
@@ -407,7 +417,7 @@ class LearningRouter (object):
         if IPAddr(NextHopIP) in self.arp_table: 
           eth.dst = self.arp_table[IPAddr(NextHopIP)]
           eth.src = self.EthAddr
-          eth.set_payload(ipv4_packet_out)
+          eth.set_payload(ipv4_packet)
 
           # msg is the "packet out" message. Now giving this packet special properties
           msg = of.ofp_packet_out()
