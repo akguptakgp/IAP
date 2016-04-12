@@ -41,15 +41,18 @@ _flood_delay = 0
 HELLOINT = 5
 NBRTIMEOUT = 15
 LSUINT = 30
+LSUTIMEOUT = 90
 
 _running = False
 _hello_tos = 126
 _lsu_tos = 127
 neighbours = {}
 times = {}
+times2 = {}
 seqnum = {}
 G=nx.Graph()
 hosts=[]
+def_int = 2
 
 class LearningSwitch (object):
   def __init__ (self, connection, transparent):
@@ -158,26 +161,33 @@ class LearningRouter (object):
     self.connection = connection
     self.arp_table={}
     self.subnet_mask='255.255.255.0'
-    global hosts
+    global hosts,G,def_int
     # Assign IP and Eth Address
     if(self.connection.dpid==1): # Router R1
       self.IPAddr=IPAddr('10.0.1.1')
       self.EthAddr=EthAddr('00:00:00:00:00:01')
       hosts.append('10.0.1.2')
       hosts.append('10.0.1.3')
+      G.add_edge(self.IPAddr,IPAddr('10.0.1.2'))
+      G.add_edge(self.IPAddr,IPAddr('10.0.1.3'))
     elif(self.connection.dpid==2): # Router R2
       self.IPAddr=IPAddr('10.0.2.1')
       self.EthAddr=EthAddr('00:00:00:00:00:02')
       hosts.append('10.0.2.2')
+      G.add_edge(self.IPAddr,IPAddr('10.0.2.2'))
     elif(self.connection.dpid==3): # Router R3
       self.IPAddr=IPAddr('10.0.3.1')
       self.EthAddr=EthAddr('00:00:00:00:00:03')
       hosts.append('10.0.3.2')
+      G.add_edge(self.IPAddr,IPAddr('10.0.3.2'))
+      def_int=3
     else:
       self.IPAddr=IPAddr('10.0.4.1')        # Router R4
       self.EthAddr=EthAddr('00:00:00:00:00:04')
       hosts.append('10.0.4.2')
       hosts.append('10.0.4.3')
+      G.add_edge(self.IPAddr,IPAddr('10.0.4.2'))
+      G.add_edge(self.IPAddr,IPAddr('10.0.4.3'))
     self.que=[]
 
 
@@ -292,9 +302,10 @@ class LearningRouter (object):
 
   def FindNextHopInterface(self,ip):
   	global def_int,G
+  	ip=IPAddr(ip)
   	if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr.toStr(),self.subnet_mask):
   		if ip.toStr() in hosts:
-  			return ip.toStr(),def_int,0
+  			return ip.toStr(),str(def_int),0
   		else :
   			return -1,-1,1
   	if ip not in G.nodes():
@@ -305,12 +316,12 @@ class LearningRouter (object):
   			return -1,-1,0
   		else:
   			ip=IPAddr(ip1)
-  	if not nx.has_path(self.IPAddr,ip):
+  	if not nx.has_path(G,self.IPAddr,ip):
   		return -1,-1,0
-  	l=nx.shortest_path(self.IPAddr,ip)
+  	l=nx.shortest_path(G,self.IPAddr,ip)
   	for i in neighbours.keys():
   		if neighbours[i]==l[1]:
-  			return l[1],i,0
+  			return l[1].toStr(),str(i),0
   			
   def isValidIpPacket(self,event):
     ipv4_packet = event.parsed.find("ipv4")
@@ -372,6 +383,7 @@ class LearningRouter (object):
     	return
 
     if ipv4_packet.tos == _lsu_tos:
+    	times2[src_ip]=time.time()
 		pl=ipv4_packet.next
 		lst=pl.split(':')[:-1]
 		if src_ip in seqnum.keys() and seqnum[src_ip]<=int(pl[0]):
@@ -548,6 +560,8 @@ def send_lsu():
 	seq=seq+1
 	for i in neighbours.values():
 		pl=pl+i.toStr()+':'
+	for i in hosts:
+		pl=pl+i.toStr()+':'
 	rep=ipv4()
 	rep.next=pl
 	global _lsu_tos
@@ -584,11 +598,14 @@ def _handle_timer(ofnexus):
     # CHECK outdated neighbours
     tm=time.time()
     sz=times.keys()
-    global NBRTIMEOUT
+    global NBRTIMEOUT,LSUTIMEOUT,G
     for port in sz:
     	if tm-times[port]>NBRTIMEOUT:
     		times.pop(port,0)
     		neighbours.pop(port,0)
+    for ip in times2.keys():
+    	if tm-times2[ip]>LSUTIMEOUT:
+    		G.remove_node(ip)
     if len(times.keys())<len(sz):
     	send_lsu()
 
