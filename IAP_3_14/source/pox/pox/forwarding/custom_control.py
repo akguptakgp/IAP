@@ -53,6 +53,8 @@ seqnum = {}
 G=nx.Graph()
 hosts=[]
 def_int = 2
+IPA=""
+ETH=""
 
 class LearningSwitch (object):
   def __init__ (self, connection, transparent):
@@ -161,7 +163,7 @@ class LearningRouter (object):
     self.connection = connection
     self.arp_table={}
     self.subnet_mask='255.255.255.0'
-    global hosts,G,def_int
+    global hosts,G,def_int,IPA,ETH
     # Assign IP and Eth Address
     if(self.connection.dpid==1): # Router R1
       self.IPAddr=IPAddr('10.0.1.1')
@@ -188,6 +190,8 @@ class LearningRouter (object):
       hosts.append('10.0.4.3')
       G.add_edge(self.IPAddr,IPAddr('10.0.4.2'))
       G.add_edge(self.IPAddr,IPAddr('10.0.4.3'))
+    IPA=self.IPAddr
+    ETH=self.EthAddr
     self.que=[]
 
 
@@ -303,7 +307,8 @@ class LearningRouter (object):
   def FindNextHopInterface(self,ip):
   	global def_int,G
   	ip=IPAddr(ip)
-  	if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr.toStr(),self.subnet_mask):
+  	if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(
+      self.IPAddr.toStr(),self.subnet_mask):
   		if ip.toStr() in hosts:
   			return ip.toStr(),str(def_int),0
   		else :
@@ -383,24 +388,24 @@ class LearningRouter (object):
     	return
 
     if ipv4_packet.tos == _lsu_tos:
-    	times2[src_ip]=time.time()
-		pl=ipv4_packet.next
-		lst=pl.split(':')[:-1]
-		if src_ip in seqnum.keys() and seqnum[src_ip]<=int(pl[0]):
-			return
-		seqnum[src_ip]=int(pl[0])
-		G.remove_node(src_ip)
-		for i in lst[1:]:
-			G.add_edge(src_ip,IPAddr(i))
-		eth = ethernet()
-	    eth.src = self.EthAddr
-	    eth.set_payload(ipv4_packet)
-	    eth.type = ethernet.IP_TYPE
-	    msg = of.ofp_packet_out()
-	    msg.data = eth.pack()
-	    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
-	    self.connection.send(msg)
-	    return
+      times2[src_ip]=time.time()
+      pl=ipv4_packet.next
+      lst=pl.split(':')[:-1]
+      if src_ip in seqnum.keys() and seqnum[src_ip]<=int(pl[0]):
+      	return
+      seqnum[src_ip]=int(pl[0])
+      G.remove_node(src_ip)
+      for i in lst[1:]:
+      	G.add_edge(src_ip,IPAddr(i))
+      eth = ethernet()
+      eth.src = self.EthAddr
+      eth.set_payload(ipv4_packet)
+      eth.type = ethernet.IP_TYPE
+      msg = of.ofp_packet_out()
+      msg.data = eth.pack()
+      msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+      self.connection.send(msg)
+      return
 
     if dst_mac!=self.EthAddr and dst_mac!=EthAddr('ff:ff:ff:ff:ff:ff'):
       return
@@ -555,59 +560,59 @@ class l2_learning (object):
 
 seq=1
 def send_lsu():
-	global seq
-	pl=str(seq)+':'
-	seq=seq+1
-	for i in neighbours.values():
-		pl=pl+i.toStr()+':'
-	for i in hosts:
-		pl=pl+i.toStr()+':'
-	rep=ipv4()
-	rep.next=pl
-	global _lsu_tos
-	rep.tos=_lsu_tos
-    rep.srcip=self.IPAddr
-    eth = ethernet()
-    eth.src = self.EthAddr
-    eth.set_payload(rep)
-    eth.type = ethernet.IP_TYPE
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
-    self.connection.send(msg)
+  global seq
+  pl=str(seq)+':'
+  seq=seq+1
+  for i in neighbours.values():
+  	pl=pl+i.toStr()+':'
+  for i in hosts:
+  	pl=pl+i.toStr()+':'
+  rep=ipv4()
+  rep.next=pl
+  global _lsu_tos
+  rep.tos=_lsu_tos
+  rep.srcip=self.IPAddr
+  eth = ethernet()
+  eth.src = self.EthAddr
+  eth.set_payload(rep)
+  eth.type = ethernet.IP_TYPE
+  msg = of.ofp_packet_out()
+  msg.data = eth.pack()
+  msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+  self.connection.send(msg)
 
 ct=1
 def _handle_timer(ofnexus):
-	rep=ipv4()
-	global _hello_tos,ct
-	if ct==6:
-		send_lsu()
-		ct=0
-	ct=ct+1
-	rep.tos=_hello_tos
-    rep.srcip=self.IPAddr
-    eth = ethernet()
-    eth.src = self.EthAddr
-    eth.set_payload(rep)
-    eth.type = ethernet.IP_TYPE
-    msg = of.ofp_packet_out()
-    msg.data = eth.pack()
-    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
-    self.connection.send(msg)
+  rep=ipv4()
+  global _hello_tos,ct,IPA,ETH
+  if ct==6:
+  	send_lsu()
+  	ct=0
+  ct=ct+1
+  rep.tos=_hello_tos
+  rep.srcip=IPA
+  eth = ethernet()
+  eth.src = ETH
+  eth.set_payload(rep)
+  eth.type = ethernet.IP_TYPE
+  msg = of.ofp_packet_out()
+  msg.data = eth.pack()
+  msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+  self.connection.send(msg)
 
-    # CHECK outdated neighbours
-    tm=time.time()
-    sz=times.keys()
-    global NBRTIMEOUT,LSUTIMEOUT,G
-    for port in sz:
-    	if tm-times[port]>NBRTIMEOUT:
-    		times.pop(port,0)
-    		neighbours.pop(port,0)
-    for ip in times2.keys():
-    	if tm-times2[ip]>LSUTIMEOUT:
-    		G.remove_node(ip)
-    if len(times.keys())<len(sz):
-    	send_lsu()
+  # CHECK outdated neighbours
+  tm=time.time()
+  sz=times.keys()
+  global NBRTIMEOUT,LSUTIMEOUT,G
+  for port in sz:
+  	if tm-times[port]>NBRTIMEOUT:
+  		times.pop(port,0)
+  		neighbours.pop(port,0)
+  for ip in times2.keys():
+  	if tm-times2[ip]>LSUTIMEOUT:
+  		G.remove_node(ip)
+  if len(times.keys())<len(sz):
+  	send_lsu()
 
 def launch (transparent=False, hold_down=_flood_delay):
   """
