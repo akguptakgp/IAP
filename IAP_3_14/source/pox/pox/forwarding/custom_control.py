@@ -330,7 +330,7 @@ class LearningRouter (object):
       sys.stderr.write(self.neighbours[i].toStr()+"\n\n")
       if self.neighbours[i]==l[1]:
       	return l[1].toStr(),str(i),0
-    # return -1,-1,0
+    return -1,-1,0
   			
   def isValidIpPacket(self,event):
     ipv4_packet = event.parsed.find("ipv4")
@@ -391,9 +391,9 @@ class LearningRouter (object):
     global _hello_tos, _lsu_tos
     if ipv4_packet.tos == _hello_tos:
       print "HELLO at R"+str(event.dpid)+" from "+src_ip.toStr()
-      self.neighbours[of.OFPP_IN_PORT]=src_ip
-      sys.stderr.write(self.IPAddr.toStr()+" "+str(of.OFPP_IN_PORT)+" "+src_ip.toStr()+"\n")
-      self.times[of.OFPP_IN_PORT]=time.time()
+      self.neighbours[event.port]=src_ip
+      sys.stderr.write(self.IPAddr.toStr()+" "+str(event.port)+" "+src_ip.toStr()+"\n")
+      self.times[event.port]=time.time()
       self.G.add_edge(self.IPAddr,src_ip)
       self.send_lsu()
       return
