@@ -24,6 +24,7 @@ import pox.openflow.libopenflow_01 as of
 from pox.lib.util import dpid_to_str
 from pox.lib.util import str_to_bool
 import time
+from threading import Thread
 from pox.lib.packet.ethernet import ethernet
 from pox.lib.packet.arp import arp
 from pox.lib.packet.icmp import icmp,unreach,echo
@@ -32,6 +33,7 @@ from pox.lib.addresses import *
 from pox.lib.recoco import Timer
 import time
 import networkx as nx
+import sys
 
 log = core.getLogger()
 
@@ -42,19 +44,8 @@ HELLOINT = 5
 NBRTIMEOUT = 15
 LSUINT = 30
 LSUTIMEOUT = 90
-
-_running = False
 _hello_tos = 126
 _lsu_tos = 127
-neighbours = {}
-times = {}
-times2 = {}
-seqnum = {}
-G=nx.Graph()
-hosts=[]
-def_int = 2
-IPA=""
-ETH=""
 
 class LearningSwitch (object):
   def __init__ (self, connection, transparent):
@@ -161,40 +152,48 @@ class LearningRouter (object):
   def __init__ (self, connection):
     # Switch we'll be adding L2 learning switch capabilities to
     self.connection = connection
+    self.G=nx.DiGraph()
+    self.hosts=[]
+    self.times = {}
+    self.def_int = 2
+    self.ct=1
+    self.times2 = {}
+    self.seqnum = {}
+    self.seq=1
+    self.neighbours = []
     self.arp_table={}
     self.subnet_mask='255.255.255.0'
-    global hosts,G,def_int,IPA,ETH
+    global HELLOINT
     # Assign IP and Eth Address
     if(self.connection.dpid==1): # Router R1
       self.IPAddr=IPAddr('10.0.1.1')
       self.EthAddr=EthAddr('00:00:00:00:00:01')
-      hosts.append('10.0.1.2')
-      hosts.append('10.0.1.3')
-      G.add_edge(self.IPAddr,IPAddr('10.0.1.2'))
-      G.add_edge(self.IPAddr,IPAddr('10.0.1.3'))
+      self.hosts.append('10.0.1.2')
+      self.hosts.append('10.0.1.3')
+      self.G.add_edge(IPAddr('10.0.1.1'),IPAddr('10.0.1.2'))
+      self.G.add_edge(IPAddr('10.0.1.1'),IPAddr('10.0.1.3'))
     elif(self.connection.dpid==2): # Router R2
       self.IPAddr=IPAddr('10.0.2.1')
       self.EthAddr=EthAddr('00:00:00:00:00:02')
-      hosts.append('10.0.2.2')
-      G.add_edge(self.IPAddr,IPAddr('10.0.2.2'))
+      self.hosts.append('10.0.2.2')
+      self.G.add_edge(IPAddr('10.0.2.1'),IPAddr('10.0.2.2'))
     elif(self.connection.dpid==3): # Router R3
       self.IPAddr=IPAddr('10.0.3.1')
       self.EthAddr=EthAddr('00:00:00:00:00:03')
-      hosts.append('10.0.3.2')
-      G.add_edge(self.IPAddr,IPAddr('10.0.3.2'))
-      def_int=3
+      self.hosts.append('10.0.3.2')
+      self.G.add_edge(IPAddr('10.0.3.1'),IPAddr('10.0.3.2'))
+      self.def_int=3
     else:
       self.IPAddr=IPAddr('10.0.4.1')        # Router R4
       self.EthAddr=EthAddr('00:00:00:00:00:04')
-      hosts.append('10.0.4.2')
-      hosts.append('10.0.4.3')
-      G.add_edge(self.IPAddr,IPAddr('10.0.4.2'))
-      G.add_edge(self.IPAddr,IPAddr('10.0.4.3'))
-    IPA=self.IPAddr
-    ETH=self.EthAddr
+      self.hosts.append('10.0.4.2')
+      self.hosts.append('10.0.4.3')
+      self.G.add_edge(IPAddr('10.0.4.1'),IPAddr('10.0.4.2'))
+      self.G.add_edge(IPAddr('10.0.4.1'),IPAddr('10.0.4.3'))
     self.que=[]
 
-
+    # Thread(target=self._handle_timer,args=()).start()
+    Timer( HELLOINT, self._handle_timer, recurring=True)
     # We want to hear PacketIn messages, so we listen
     # to the connection
     connection.addListeners(self)
@@ -305,28 +304,33 @@ class LearningRouter (object):
     return Netstr[:-1]  
 
   def FindNextHopInterface(self,ip):
-  	global def_int,G
-  	ip=IPAddr(ip)
-  	if self.ComputeNetWorkAddr(ip,self.subnet_mask)==self.ComputeNetWorkAddr(
-      self.IPAddr.toStr(),self.subnet_mask):
-  		if ip.toStr() in hosts:
-  			return ip.toStr(),str(def_int),0
-  		else :
-  			return -1,-1,1
-  	if ip not in G.nodes():
-  		ip1=ip.toStr().split('.')
-  		ip1[-1]='1'
-  		ip1='.'.join(ip1)
-  		if IPAddr(ip1) not in G.nodes():
-  			return -1,-1,0
-  		else:
-  			ip=IPAddr(ip1)
-  	if not nx.has_path(G,self.IPAddr,ip):
-  		return -1,-1,0
-  	l=nx.shortest_path(G,self.IPAddr,ip)
-  	for i in neighbours.keys():
-  		if neighbours[i]==l[1]:
-  			return l[1].toStr(),str(i),0
+    ip=IPAddr(ip)
+    if self.ComputeNetWorkAddr(ip.toStr(),self.subnet_mask)==self.ComputeNetWorkAddr(self.IPAddr.toStr(),self.subnet_mask):
+    	if ip.toStr() in self.hosts:
+    		return ip.toStr(),str(self.def_int),0
+    	else :
+    		return -1,-1,1
+    if ip not in self.G.nodes():
+    	ip1=ip.toStr().split('.')
+    	ip1[-1]='1'
+    	ip1='.'.join(ip1)
+    	if IPAddr(ip1) not in self.G.nodes():
+    		return -1,-1,0
+    	else:
+    		ip=IPAddr(ip1)
+    if not nx.has_path(self.G,self.IPAddr,ip):
+    	return -1,-1,0
+    l=nx.shortest_path(self.G,self.IPAddr,ip)
+    for x in l:
+      sys.stderr.write(x.toStr()+"\n")
+    sys.stderr.write("self.G\n")
+    for e in self.G.edges():
+      sys.stderr.write(e[0].toStr()+" "+e[1].toStr()+"\n")
+    for i in self.neighbours:
+      sys.stderr.write(i.toStr()+"\n\n")
+      if i==l[1]:
+      	return l[1].toStr(),str(i),0
+    # return -1,-1,0
   			
   def isValidIpPacket(self,event):
     ipv4_packet = event.parsed.find("ipv4")
@@ -368,35 +372,49 @@ class LearningRouter (object):
     return True
 
   def handle_ipPacket(self,event): # handle broad cast ip also 
-    print "IP packet Received at R"+str(event.dpid)
+    # print "IP packet Received at R"+str(event.dpid)
 
     packet=event.parsed
+    if(packet is None):
+    	print "error"
+    	print event
     src_mac = packet.src
     dst_mac = packet.dst
 
-    ipv4_packet = event.parsed.find("ipv4")
+    ipv4_packet = event.parsed.next
+    if(ipv4_packet is None):
+      print "error"
+      print event
     # Do more processing of the IPv4 packet
     src_ip = ipv4_packet.srcip
     dst_ip = ipv4_packet.dstip
     global _hello_tos, _lsu_tos
     if ipv4_packet.tos == _hello_tos:
-    	if OFPP_IN_PORT in times.keys() and neighbours[OFPP_IN_PORT]==src_ip:
-    		return
-    	neighbours[OFPP_IN_PORT]=src_ip
-    	times[OFPP_IN_PORT]=time.time()
-    	send_lsu()
-    	return
+      print "HELLO at R"+str(event.dpid)+" from "+src_ip.toStr()
+      if src_ip not in self.neighbours:
+        self.neighbours.append(src_ip)
+      sys.stderr.write(self.IPAddr.toStr()+" "+str(of.OFPP_IN_PORT)+" "+src_ip.toStr()+"\n")
+      self.times[src_ip]=time.time()
+      self.G.add_edge(self.IPAddr,src_ip)
+      self.send_lsu()
+      return
 
     if ipv4_packet.tos == _lsu_tos:
-      times2[src_ip]=time.time()
+      if src_ip==self.IPAddr:
+        return
+      print "LSU at R"+str(event.dpid)+" from "+src_ip.toStr()
+      self.times2[src_ip]=time.time()
       pl=ipv4_packet.next
       lst=pl.split(':')[:-1]
-      if src_ip in seqnum.keys() and seqnum[src_ip]<=int(pl[0]):
+      if src_ip in self.seqnum.keys() and self.seqnum[src_ip]>=int(pl[0]):
       	return
-      seqnum[src_ip]=int(pl[0])
-      G.remove_node(src_ip)
+      self.seqnum[src_ip]=int(pl[0])
+      try:
+        self.G.remove_node(src_ip)
+      except:
+        pass
       for i in lst[1:]:
-      	G.add_edge(src_ip,IPAddr(i))
+      	self.G.add_edge(src_ip,IPAddr(i))
       eth = ethernet()
       eth.src = self.EthAddr
       eth.set_payload(ipv4_packet)
@@ -414,8 +432,6 @@ class LearningRouter (object):
       return
 
     if(dst_ip==self.IPAddr or dst_ip.toStr()=='255.255.255.255'):
-      print "My Packet accept at ",self.IPAddr
-      print ipv4_packet
       if(packet.payload.protocol==packet.payload.ICMP_PROTOCOL):
       	self.handle_icmp(event)
     else:   
@@ -538,6 +554,66 @@ class LearningRouter (object):
       # print "packet droped"
       return
 
+  def send_lsu(self):
+	  pl=str(self.seq)+':'
+	  self.seq=self.seq+1
+	  for i in self.neighbours:
+	  	pl=pl+i.toStr()+':'
+	  for i in self.hosts:
+	  	pl=pl+i+':'
+	  rep=ipv4()
+	  rep.next=pl
+	  global _lsu_tos
+	  rep.tos=_lsu_tos
+	  rep.srcip=self.IPAddr
+	  eth = ethernet()
+	  eth.src = self.EthAddr
+	  eth.set_payload(rep)
+	  eth.type = ethernet.IP_TYPE
+	  msg = of.ofp_packet_out()
+	  msg.data = eth.pack()
+	  msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+	  self.connection.send(msg)
+
+  def _handle_timer(self):
+  	  # print "sending IP packet from R"+str(self.connection.dpid) 
+    rep=ipv4()
+    global _hello_tos
+    if self.ct==6:
+    	self.send_lsu()
+    	self.ct=0
+    self.ct=self.ct+1
+    rep.tos=_hello_tos
+    rep.srcip=self.IPAddr;
+    eth = ethernet()
+    eth.src = self.EthAddr;
+    eth.set_payload(rep)
+    eth.type = ethernet.IP_TYPE
+    msg = of.ofp_packet_out()
+    msg.data = eth.pack()
+    msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
+    self.connection.send(msg)
+
+    # CHECK outdated self.neighbours
+    tm=time.time()
+    sz=self.times.keys()
+    global NBRTIMEOUT,LSUTIMEOUT
+    for ip in sz:
+      if tm-self.times[ip]>NBRTIMEOUT:
+        sys.stderr.write(str(tm-self.times[ip])+" REMOVED "+ip.toStr()+"\n")
+        self.times.pop(ip,0)
+        self.G.remove_node(ip)
+        self.neighbours.remove(ip)
+
+    for ip in self.times2.keys():
+      if tm-self.times2[ip]>LSUTIMEOUT and self.G.has_node(ip):
+          self.G.remove_node(ip)
+          sys.stderr.write(str(tm-self.times2[ip])+" REMOVED "+ip.toStr()+"\n")
+    if len(self.times.keys())<len(sz):
+    	self.send_lsu()
+    # print "sending IP packet done from R"+str(self.connection.dpid)	
+
+
 class l2_learning (object):
   """
   Waits for OpenFlow switches to connect and makes them learning switches.
@@ -558,62 +634,6 @@ class l2_learning (object):
       pass
       # print "ignoring switch",event.dpid  
 
-seq=1
-def send_lsu():
-  global seq
-  pl=str(seq)+':'
-  seq=seq+1
-  for i in neighbours.values():
-  	pl=pl+i.toStr()+':'
-  for i in hosts:
-  	pl=pl+i.toStr()+':'
-  rep=ipv4()
-  rep.next=pl
-  global _lsu_tos
-  rep.tos=_lsu_tos
-  rep.srcip=self.IPAddr
-  eth = ethernet()
-  eth.src = self.EthAddr
-  eth.set_payload(rep)
-  eth.type = ethernet.IP_TYPE
-  msg = of.ofp_packet_out()
-  msg.data = eth.pack()
-  msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
-  self.connection.send(msg)
-
-ct=1
-def _handle_timer(ofnexus):
-  rep=ipv4()
-  global _hello_tos,ct,IPA,ETH
-  if ct==6:
-  	send_lsu()
-  	ct=0
-  ct=ct+1
-  rep.tos=_hello_tos
-  rep.srcip=IPA
-  eth = ethernet()
-  eth.src = ETH
-  eth.set_payload(rep)
-  eth.type = ethernet.IP_TYPE
-  msg = of.ofp_packet_out()
-  msg.data = eth.pack()
-  msg.actions.append(of.ofp_action_output(port = of.OFPP_ALL))
-  self.connection.send(msg)
-
-  # CHECK outdated neighbours
-  tm=time.time()
-  sz=times.keys()
-  global NBRTIMEOUT,LSUTIMEOUT,G
-  for port in sz:
-  	if tm-times[port]>NBRTIMEOUT:
-  		times.pop(port,0)
-  		neighbours.pop(port,0)
-  for ip in times2.keys():
-  	if tm-times2[ip]>LSUTIMEOUT:
-  		G.remove_node(ip)
-  if len(times.keys())<len(sz):
-  	send_lsu()
-
 def launch (transparent=False, hold_down=_flood_delay):
   """
   Starts an L2 learning switch.
@@ -626,13 +646,3 @@ def launch (transparent=False, hold_down=_flood_delay):
     raise RuntimeError("Expected hold-down to be a number")
 
   core.registerNew(l2_learning, str_to_bool(transparent))
-
-  global HELLOINT
-  def start ():
-    global _running
-    if _running:
-      log.error("Keepalive already running")
-      return
-    _running = True
-    Timer( HELLOINT, _handle_timer, recurring=True, args=(core.openflow,))
-  core.call_when_ready(start, "openflow", __name__)
