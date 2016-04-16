@@ -160,7 +160,7 @@ class LearningRouter (object):
     self.times2 = {}
     self.seqnum = {}
     self.seq=1
-    self.neighbours = []
+    self.neighbours = {}
     self.arp_table={}
     self.subnet_mask='255.255.255.0'
     global HELLOINT
@@ -326,9 +326,9 @@ class LearningRouter (object):
     sys.stderr.write("self.G\n")
     for e in self.G.edges():
       sys.stderr.write(e[0].toStr()+" "+e[1].toStr()+"\n")
-    for i in self.neighbours:
-      sys.stderr.write(i.toStr()+"\n\n")
-      if i==l[1]:
+    for i in self.neighbours.keys():
+      sys.stderr.write(self.neighbours[i].toStr()+"\n\n")
+      if self.neighbours[i]==l[1]:
       	return l[1].toStr(),str(i),0
     # return -1,-1,0
   			
@@ -391,10 +391,9 @@ class LearningRouter (object):
     global _hello_tos, _lsu_tos
     if ipv4_packet.tos == _hello_tos:
       print "HELLO at R"+str(event.dpid)+" from "+src_ip.toStr()
-      if src_ip not in self.neighbours:
-        self.neighbours.append(src_ip)
+      self.neighbours[of.OFPP_IN_PORT]=src_ip
       sys.stderr.write(self.IPAddr.toStr()+" "+str(of.OFPP_IN_PORT)+" "+src_ip.toStr()+"\n")
-      self.times[src_ip]=time.time()
+      self.times[of.OFPP_IN_PORT]=time.time()
       self.G.add_edge(self.IPAddr,src_ip)
       self.send_lsu()
       return
@@ -557,7 +556,7 @@ class LearningRouter (object):
   def send_lsu(self):
 	  pl=str(self.seq)+':'
 	  self.seq=self.seq+1
-	  for i in self.neighbours:
+	  for i in self.neighbours.values():
 	  	pl=pl+i.toStr()+':'
 	  for i in self.hosts:
 	  	pl=pl+i+':'
@@ -598,12 +597,12 @@ class LearningRouter (object):
     tm=time.time()
     sz=self.times.keys()
     global NBRTIMEOUT,LSUTIMEOUT
-    for ip in sz:
-      if tm-self.times[ip]>NBRTIMEOUT:
-        sys.stderr.write(str(tm-self.times[ip])+" REMOVED "+ip.toStr()+"\n")
-        self.times.pop(ip,0)
-        self.G.remove_node(ip)
-        self.neighbours.remove(ip)
+    for port in sz:
+      if tm-self.times[port]>NBRTIMEOUT:
+        sys.stderr.write(str(tm-self.times[port])+" REMOVED "+neighbours[port].toStr()+"\n")
+        self.times.pop(port,0)
+        self.G.remove_node(neighbours[port])
+        self.neighbours.pop(port,0)
 
     for ip in self.times2.keys():
       if tm-self.times2[ip]>LSUTIMEOUT and self.G.has_node(ip):
