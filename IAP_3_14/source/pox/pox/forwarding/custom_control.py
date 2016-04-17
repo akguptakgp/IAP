@@ -598,9 +598,9 @@ class LearningRouter (object):
     global NBRTIMEOUT,LSUTIMEOUT
     for port in sz:
       if tm-self.times[port]>NBRTIMEOUT:
-        sys.stderr.write(str(tm-self.times[port])+" REMOVED "+neighbours[port].toStr()+"\n")
+        sys.stderr.write(str(tm-self.times[port])+" REMOVED "+self.neighbours[port].toStr()+"\n")
         self.times.pop(port,0)
-        self.G.remove_node(neighbours[port])
+        self.G.remove_node(self.neighbours[port])
         self.neighbours.pop(port,0)
 
     for ip in self.times2.keys():
