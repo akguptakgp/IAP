@@ -325,9 +325,8 @@ class LearningRouter (object):
       sys.stderr.write(x.toStr()+"\n")
     sys.stderr.write("self.G\n")
     for e in self.G.edges():
-      sys.stderr.write(e[0].toStr()+" "+e[1].toStr()+"\n")
+      sys.stderr.write(e[0].toStr()+" "+e[1].toStr()+"\n\n")
     for i in self.neighbours.keys():
-      sys.stderr.write(self.neighbours[i].toStr()+"\n\n")
       if self.neighbours[i]==l[1]:
       	return l[1].toStr(),str(i),0
     return -1,-1,0
