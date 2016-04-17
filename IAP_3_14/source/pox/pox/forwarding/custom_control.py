@@ -325,7 +325,7 @@ class LearningRouter (object):
       sys.stderr.write(x.toStr()+"\n")
     sys.stderr.write("self.G\n")
     for e in self.G.edges():
-      sys.stderr.write(e[0].toStr()+" "+e[1].toStr()+"\n\n")
+      sys.stderr.write(e[0].toStr()+" "+e[1].toStr()+"\n")
     for i in self.neighbours.keys():
       if self.neighbours[i]==l[1]:
       	return l[1].toStr(),str(i),0
@@ -391,7 +391,6 @@ class LearningRouter (object):
     if ipv4_packet.tos == _hello_tos:
       print "HELLO at R"+str(event.dpid)+" from "+src_ip.toStr()
       self.neighbours[event.port]=src_ip
-      sys.stderr.write(self.IPAddr.toStr()+" "+str(event.port)+" "+src_ip.toStr()+"\n")
       self.times[event.port]=time.time()
       self.G.add_edge(self.IPAddr,src_ip)
       self.send_lsu()
@@ -407,8 +406,9 @@ class LearningRouter (object):
       if src_ip in self.seqnum.keys() and self.seqnum[src_ip]>=int(pl[0]):
       	return
       self.seqnum[src_ip]=int(pl[0])
+      ed=[i for i in self.G.edges() if i[0]==src_ip]
       try:
-        self.G.remove_node(src_ip)
+        self.G.remove_edges_from(ed)
       except:
         pass
       for i in lst[1:]:
